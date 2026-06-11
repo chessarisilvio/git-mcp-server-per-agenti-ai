@@ -9,3 +9,9 @@ __pycache__/
 .venv/
 venv/
 node_modules/
+
+# Build artifacts — non pubblicare
+target/
+build.log
+.cargo/
+.env.local
