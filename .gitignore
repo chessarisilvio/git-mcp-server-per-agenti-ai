@@ -15,3 +15,7 @@ target/
 build.log
 .cargo/
 .env.local
+*.egg-info/
+dist/
+build/
+.pytest_cache/
