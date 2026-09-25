@@ -7,10 +7,10 @@ name = "git-mcp-server"
 version = "0.1.0"
 description = "A Model Context Protocol (MCP) server that provides Git operations for AI agents"
 readme = "README.md"
-requires-python = ">=3.8"
+requires-python = ">=3.10"
 license = {text = "MIT"}
 authors = [
-    {name = "Your Name", email = "you@example.com"}
+    {name = "Silvio Chessari"}
 ]
 keywords = ["mcp", "git", "ai", "agents"]
 classifiers = [
@@ -19,16 +19,25 @@ classifiers = [
     "Operating System :: OS Independent",
 ]
 dependencies = [
-    "fastapi>=0.104.0",
-    "uvicorn>=0.24.0",
     "GitPython>=3.1.0",
+    "mcp>=1.2.0,<2",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.4.0",
+    "pytest-asyncio>=0.23.0",
 ]
 
 [project.urls]
-Homepage = "https://github.com/yourusername/git-mcp-server"
+Homepage = "https://github.com/chessarisilvio/git-mcp-server-per-agenti-ai"
 
 [project.scripts]
 git-mcp-server = "git_mcp_server.main:main"
 
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+
 [tool.setuptools.packages.find]
 where = ["."]
+include = ["git_mcp_server*"]
