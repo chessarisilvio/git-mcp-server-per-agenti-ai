@@ -1,152 +1,128 @@
-# Git MCP Server for AI Agents
+# Git MCP Server
 
-A Model Context Protocol (MCP) server that provides Git operations for AI agents.
+A [Model Context Protocol](https://modelcontextprotocol.io) (MCP) server that exposes
+read-only Git operations as tools, built with the official [`mcp`](https://pypi.org/project/mcp/)
+Python SDK and [GitPython](https://github.com/gitpython-developers/GitPython).
 
-## Descrizione
+The server speaks MCP over stdio: it is meant to be launched as a subprocess by an MCP
+client (an AI agent, an IDE integration, `claude` Desktop, etc.), not called directly
+over HTTP.
 
-Questo progetto implementa un server MCP che espone operazioni Git tramite un'API JSON strutturata, progettato per essere utilizzato da agenti AI che necessitano di interagire con repository Git in modo programmato e sicuro.
+## What it does
 
-## Architettura
+It exposes four tools against a local Git repository:
 
-- **FastAPI**: framework web per l'esposizione delle API
-- **GitPython**: wrapper per le operazioni Git
-- **Struttura modulare**: separazione tra server, wrapper Git e modelli di risposta
-- **Configurazione tramite variabili d'ambiente**: percorso del repository, host e porta
+| Tool | Description | Parameters |
+|---|---|---|
+| `git_status` | Working tree status: current branch, staged/unstaged/untracked files | `repo_path` (optional) |
+| `git_diff` | Diff of working tree or staged changes, optionally scoped to one file | `repo_path`, `staged` (bool), `file` |
+| `git_log` | Commit history, filterable by count, date, author, or file | `repo_path`, `n`, `since`, `author`, `file` |
+| `git_show` | A commit's metadata + diff, or a file's content at a given ref | `repo_path`, `ref`, `file` |
 
-## Installazione
+`repo_path` is optional on every tool: if omitted, it falls back to the
+`GIT_MCP_SERVER_REPO_PATH` environment variable, or `.` if that isn't set either.
 
-### Da PyPI (quando pubblicato)
+All operations are read-only. There is no `git_commit`, `git_push`, `git_add`, etc.
+
+## Installation
+
 ```bash
-pip install git-mcp-server
-```
-
-### Installazione per sviluppo
-```bash
-# Clona il repository
-git clone <repository-url>
-cd git-mcp-server-per-agenti-ai
-
-# Installa in modalità sviluppo
+python3 -m venv .venv
+source .venv/bin/activate
 pip install -e .
 ```
 
-## Uso
+Verified in a clean virtual environment (Python 3.10–3.13) with no errors.
 
-### Avvio del server
-Il server può essere avviato in due modi:
+## Running the server
 
-1. Utilizzando il comando installato:
-```bash
-git-mcp-server
-```
+The server communicates over stdio using the MCP protocol — it does not print anything
+useful if you just run it in a terminal and type at it. It is meant to be started by an
+MCP client. For example, in a client configured via a JSON file (the format used by
+Claude Desktop and similar tools):
 
-2. Utilizzando uvicorn direttamente (per sviluppo):
-```bash
-uvicorn git_mcp_server.main:app --host localhost --port 8080
-```
-
-### Configurazione
-Imposta le variabili d'ambiente per la configurazione:
-- `GIT_MCP_SERVER_REPO_PATH`: Percorso del repository Git da gestire (default: directory corrente)
-- `GIT_MCP_SERVER_HOST`: Host su cui bindare il server (default: localhost)
-- `GIT_MCP_SERVER_PORT`: Porta su cui bindare il server (default: 8080)
-
-Esempio:
-```bash
-export GIT_MCP_SERVER_REPO_PATH=/path/to/your/repo
-export GIT_MCP_SERVER_HOST=0.0.0.0
-export GIT_MCP_SERVER_PORT=8080
-git-mcp-server
-```
-
-## API Endpoints
-
-### POST `/git/command`
-
-Esegue un comando Git e restituisce dati strutturati in JSON.
-
-#### Corpo della richiesta
 ```json
 {
-  "command": "status|diff|log",
-  "args": {
-    // Argomenti opzionali specifici al comando
-    // Per diff: {"staged": true, "file": "path/to/file"}
-    // Per log: {"n": 10, "since": "2026-01-01", "author": "Name <email>", "file": "path/to/file"}
+  "mcpServers": {
+    "git": {
+      "command": "git-mcp-server",
+      "env": {
+        "GIT_MCP_SERVER_REPO_PATH": "/path/to/your/repo"
+      }
+    }
   }
 }
 ```
 
-#### Corpo della risposta
-```json
-{
-  "success": true,
-  "output": { ... }, // Dati strutturati a seconda del comando
-  "error": null
-}
+`GIT_MCP_SERVER_REPO_PATH` is just the default; any tool call can override it by passing
+its own `repo_path` argument.
+
+### Manually talking to it
+
+You can drive the server with the official `mcp` client library to see the protocol
+in action, without any external client:
+
+```python
+import asyncio, sys
+from mcp import ClientSession
+from mcp.client.stdio import StdioServerParameters, stdio_client
+
+async def main():
+    params = StdioServerParameters(command=sys.executable, args=["-m", "git_mcp_server.main"])
+    async with stdio_client(params) as (read, write):
+        async with ClientSession(read, write) as session:
+            await session.initialize()
+            tools = await session.list_tools()
+            print([t.name for t in tools.tools])
+
+            result = await session.call_tool("git_status", {"repo_path": "."})
+            print(result.content[0].text)
+
+asyncio.run(main())
 ```
 
-Se `success` è false, `output` sarà null e `error` conterrà un messaggio di errore.
+Running this against the repository itself prints the four tool names followed by a
+JSON status payload (branch, staged/unstaged/untracked files).
 
-#### Dettagli dei comandi
-
-- **status**: Restituisce informazioni sullo stato del repository
-  - Chiavi di output: `branch`, `staged` (lista), `unstaged` (lista), `untracked` (lista)
-  
-- **diff**: Restituisce informazioni sulle differenze
-  - Argomenti: `staged` (booleano), `file` (stringa percorso)
-  - Chiave di output: `diff` (stringa)
-
-- **log**: Restituisce la cronologia dei commit
-  - Argomenti: `n` (int, default 10), `since` (stringa data), `author` (stringa), `file` (stringa percorso)
-  - Chiave di output: `commits` (lista di oggetti commit)
-
-### Esempio di utilizzo con curl
+## Testing
 
 ```bash
-# Ottieni lo status
-curl -X POST http://localhost:8080/git/command \
-  -H "Content-Type: application/json" \
-  -d '{"command": "status"}'
-
-# Ottieni il diff staged
-curl -X POST http://localhost:8080/git/command \
-  -H "Content-Type: application/json" \
-  -d '{"command": "diff", "args": {"staged": true}}'
-
-# Ottieni gli ultimi 5 commit
-curl -X POST http://localhost:8080/git/command \
-  -H "Content-Type: application/json" \
-  -d '{"command": "log", "args": {"n": 5}}'
+pip install -e ".[dev]"
+pytest tests/ -v
 ```
 
-## Test
+11 tests, verified passing on Python 3.10, 3.11, 3.12 and 3.13:
+- `tests/test_git_ops.py` exercises `git_status`/`git_diff`/`git_log`/`git_show`
+  directly against a throwaway Git repository created per test.
+- `tests/test_server.py` spawns the actual server subprocess and talks to it over
+  stdio using the MCP client, checking tool discovery and a couple of real tool calls
+  end to end.
 
-È incluso uno script di test per validare gli endpoint API:
-```bash
-python test_api.py
-```
-Assicurati che il server sia in esecuzione prima di eseguire i test.
+CI (`.github/workflows/ci.yml`) runs the same suite on every push and pull request
+across that same Python version matrix.
 
-## Stato
+## Configuration
 
-✅ COMPLETATO — 2026-06-10
-- Struttura progetto creata
-- Setup FastAPI e schema JSON completato
-- Wrapper GitPython per operazioni implementato
-- Script di test e README dettagliato scritto
-- Tutte le funzionalità previste operative
+| Variable | Purpose | Default |
+|---|---|---|
+| `GIT_MCP_SERVER_REPO_PATH` | Default repository path when a tool call doesn't specify `repo_path` | `.` |
 
-## Note importanti
+## Limitations
 
-### Benchmark GPU
-Se questo server viene utilizzato insieme a workflow AI dipendenti dalla GPU (come l'inferenza LLM), si noti che:
-- I test di benchmark della GPU richiedono accesso esclusivo alla GPU
-- Tali benchmark dovrebbero essere eseguiti manualmente quando la GPU non è utilizzata da altri processi
-- Il server MCP stesso non esegue operazioni GPU; fornisce solo funzionalità Git
+- **Read-only.** No write operations (commit, push, add, branch, checkout, ...) are
+  implemented.
+- **No path sandboxing.** Any `repo_path` the caller passes is opened as-is — the
+  server does not restrict which repositories on disk it will read. Don't expose it to
+  untrusted callers without adding your own access control.
+- **Stdio transport only.** The underlying SDK also supports SSE/streamable-HTTP
+  transports, but this server only wires up stdio.
+- **Pinned to `mcp<2`.** The `mcp` SDK's `2.x` line renamed `FastMCP` to `MCPServer`
+  and changed parts of its API; this project targets the `1.x` `FastMCP` API and pins
+  accordingly. Porting to `2.x` should be a small, mostly mechanical change.
+- **Not published to PyPI.** Install from source as shown above.
+- No authentication or rate limiting — the process trusts whatever MCP client launches
+  it.
 
-### Privacy e distribuzione pubblica
-Quando si pubblica questo codice pubblicamente:
-- Non includere percorsi assoluti locali nel codice o nella documentazione
-- Utilizzare variabili d'ambiente per configurazioni sensibili
-- Fornire un file `.env.example` con valori placeholder generici
+## License
+
+MIT — see [LICENSE](LICENSE).
